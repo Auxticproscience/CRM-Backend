@@ -22,19 +22,24 @@ public class GlobalExceptionHandler {
         return buildError(HttpStatus.PAYLOAD_TOO_LARGE, "El archivo supera el tamaño máximo permitido (20 MB).");
     }
 
+    @ExceptionHandler(org.springframework.web.servlet.resource.NoResourceFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleNoResource(Exception ex) {
+        return buildError(HttpStatus.NOT_FOUND, "Recurso no encontrado");
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Map<String, Object>> handleGeneric(Exception ex) {
         log.error("Error inesperado: {}", ex.getMessage(), ex);
         return buildError(HttpStatus.INTERNAL_SERVER_ERROR,
-            "Error interno del servidor: " + ex.getMessage());
+                "Error interno del servidor");
     }
 
     private ResponseEntity<Map<String, Object>> buildError(HttpStatus status, String mensaje) {
         return ResponseEntity.status(status).body(Map.of(
-            "timestamp", OffsetDateTime.now().toString(),
-            "status",    status.value(),
-            "error",     status.getReasonPhrase(),
-            "mensaje",   mensaje
+                "timestamp", OffsetDateTime.now().toString(),
+                "status",    status.value(),
+                "error",     status.getReasonPhrase(),
+                "mensaje",   mensaje
         ));
     }
 }
