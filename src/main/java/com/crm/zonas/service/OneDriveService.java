@@ -82,7 +82,7 @@ public class OneDriveService {
      */
     public List<ArchivoOneDrive> listarArchivosXlsx(String token) throws Exception {
         String url = "https://graph.microsoft.com/v1.0/users/"
-                + userId + "/drive/root/children";
+                + userId + "/drive/root:/" + folderPath + ":/children";
 
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(token);
@@ -92,17 +92,22 @@ public class OneDriveService {
 
         JsonNode root  = mapper.readTree(response.getBody());
         JsonNode items = root.get("value");
-        for (JsonNode item : items) {
-            log.info("ITEM: {}", item.get("name").asText());
-        }
 
         List<ArchivoOneDrive> archivos = new ArrayList<>();
         if (items != null && items.isArray()) {
             for (JsonNode item : items) {
-                archivos.add(new ArchivoOneDrive(
-                        item.get("id").asText(),
-                        item.get("name").asText()
-                ));
+
+                String nombre = item.get("name").asText();
+
+                if (item.has("file") && nombre.toLowerCase().endsWith(".xlsx")) {
+
+                    archivos.add(new ArchivoOneDrive(
+                            item.get("id").asText(),
+                            nombre
+                    ));
+                } else {
+                    log.warn("Ignorado (no es xlsx o es carpeta): {}", nombre);
+                }
             }
         }
         log.info("Archivos .xlsx encontrados en OneDrive: {}", archivos.size());
