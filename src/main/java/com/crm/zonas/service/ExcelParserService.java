@@ -11,7 +11,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.time.*;
 import java.util.*;
 
@@ -20,35 +22,57 @@ import java.util.*;
 @RequiredArgsConstructor
 public class ExcelParserService {
 
-    private final ActividadRepository actividadRepo;
-    private final EstadoRepository    estadoRepo;
-    private final TipoRepository      tipoRepo;
-    private final PropietarioRepository propietarioRepo;
-    private final ClienteRepository   clienteRepo;
-    private final LugarRepository     lugarRepo;
-    private final CargaExcelRepository cargaRepo;
+    private final ActividadRepository    actividadRepo;
+    private final EstadoRepository       estadoRepo;
+    private final TipoRepository         tipoRepo;
+    private final PropietarioRepository  propietarioRepo;
+    private final ClienteRepository      clienteRepo;
+    private final LugarRepository        lugarRepo;
+    private final CargaExcelRepository   cargaRepo;
 
-    // ── Índices de columna según el Excel real ────────────────────
-    // [0] Fecha de creación  [1] Descripción  [2] Nombre
-    // [3] Propietario        [4] Lugar        [5] Cliente
-    // [6] Asunto             [7] Estado       [8] Tipo
+    // ── Índices de columna ────────────────────────────────────────
     private static final int COL_FECHA        = 0;
     private static final int COL_DESCRIPCION  = 1;
     private static final int COL_NOMBRE       = 2;
     private static final int COL_PROPIETARIO  = 3;
     private static final int COL_LUGAR        = 4;
     private static final int COL_CLIENTE      = 5;
-    // COL_ASUNTO = 6  (mismo valor que nombre, se ignora)
     private static final int COL_ESTADO       = 7;
     private static final int COL_TIPO         = 8;
 
+    // ─────────────────────────────────────────────────────────────
+    // Entrada desde el scheduler (OneDrive → InputStream)
+    // ─────────────────────────────────────────────────────────────
+
+    /**
+     * Llamado por el SchedulerService al descargar un archivo de OneDrive.
+     * Delega en el núcleo de procesamiento común.
+     */
+    @Transactional
+    public CargaResultadoDTO parsearYGuardar(ByteArrayInputStream stream, String nombreArchivo) throws IOException {
+        return procesarStream(stream, nombreArchivo);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Entrada desde el endpoint REST (carga manual desde el front)
+    // ─────────────────────────────────────────────────────────────
+
+    /**
+     * Llamado por el controller REST con un MultipartFile subido manualmente.
+     * Delega en el núcleo de procesamiento común.
+     */
     @Transactional
     public CargaResultadoDTO procesarExcel(MultipartFile file) throws IOException {
+        return procesarStream(file.getInputStream(), file.getOriginalFilename());
+    }
+
+
+    private CargaResultadoDTO procesarStream(InputStream inputStream, String nombreArchivo) throws IOException {
 
         int cargados = 0, omitidos = 0;
         List<String> errores = new ArrayList<>();
 
-        try (Workbook wb = new XSSFWorkbook(file.getInputStream())) {
+        try (Workbook wb = new XSSFWorkbook(inputStream)) {
             Sheet sheet = wb.getSheetAt(0);
             DataFormatter fmt = new DataFormatter();
             FormulaEvaluator evaluator = wb.getCreationHelper().createFormulaEvaluator();
@@ -59,11 +83,10 @@ public class ExcelParserService {
                 if (row == null) continue;
 
                 try {
-                    OffsetDateTime fecha    = parseFecha(row.getCell(COL_FECHA), evaluator);
-                    String nombre           = texto(row.getCell(COL_NOMBRE), fmt);
-                    String propNombre       = texto(row.getCell(COL_PROPIETARIO), fmt);
+                    OffsetDateTime fecha  = parseFecha(row.getCell(COL_FECHA), evaluator);
+                    String nombre         = texto(row.getCell(COL_NOMBRE), fmt);
+                    String propNombre     = texto(row.getCell(COL_PROPIETARIO), fmt);
 
-                    // Campos obligatorios
                     if (fecha == null || nombre.isBlank() || propNombre.isBlank()) {
                         omitidos++;
                         errores.add("Fila " + (i + 1) + ": fecha/nombre/propietario vacío");
@@ -77,7 +100,7 @@ public class ExcelParserService {
                                             .nombre(propNombre.toUpperCase())
                                             .build()));
 
-                    // Deduplicación por clave única del esquema
+                    // Deduplicación
                     if (actividadRepo.existsByFechaCreacionAndNombreAndPropietarioId(
                             fecha, nombre, propietario.getId())) {
                         omitidos++;
@@ -106,9 +129,9 @@ public class ExcelParserService {
             }
         }
 
-        // Registro de auditoría
+        // Auditoría
         CargaExcel registro = CargaExcel.builder()
-                .nombreArchivo(file.getOriginalFilename())
+                .nombreArchivo(nombreArchivo)
                 .registrosCargados(cargados)
                 .registrosOmitidos(omitidos)
                 .notas(errores.isEmpty() ? null : String.join(" | ", errores))
@@ -116,10 +139,10 @@ public class ExcelParserService {
         cargaRepo.save(registro);
 
         log.info("Carga finalizada — archivo: {}, insertados: {}, omitidos: {}",
-                file.getOriginalFilename(), cargados, omitidos);
+                nombreArchivo, cargados, omitidos);
 
         return new CargaResultadoDTO(
-                file.getOriginalFilename(),
+                nombreArchivo,
                 cargados,
                 omitidos,
                 registro.getFechaCarga(),
@@ -127,11 +150,8 @@ public class ExcelParserService {
         );
     }
 
-    // ── helpers ──────────────────────────────────────────────────
-
     private String texto(Cell cell, DataFormatter fmt) {
         if (cell == null) return "";
-        // Normaliza múltiples espacios internos (ej: "STEWAR  MORALES" → "STEWAR MORALES")
         return fmt.formatCellValue(cell).trim().replaceAll("\\s+", " ");
     }
 
@@ -146,9 +166,7 @@ public class ExcelParserService {
             return cell.getLocalDateTimeCellValue().atOffset(ZoneOffset.UTC);
         }
         if (type == CellType.STRING) {
-            // Normalizar dobles espacios y trim
             String s = cell.getStringCellValue().trim().replaceAll("\\s+", " ");
-            // Formatos con hora (dd/MM/yyyy HH:mm) y solo fecha
             for (String pattern : List.of(
                     "dd/MM/yyyy HH:mm", "dd/MM/yyyy H:mm",
                     "yyyy-MM-dd HH:mm", "yyyy-MM-dd H:mm",
@@ -159,7 +177,7 @@ public class ExcelParserService {
                             java.time.format.DateTimeFormatter.ofPattern(pattern);
                     try {
                         return java.time.LocalDateTime.parse(s, dtf).atOffset(ZoneOffset.UTC);
-                    } catch (Exception ignored2) {
+                    } catch (Exception ignored) {
                         return LocalDate.parse(s, dtf).atStartOfDay().atOffset(ZoneOffset.UTC);
                     }
                 } catch (Exception ignored) {}
