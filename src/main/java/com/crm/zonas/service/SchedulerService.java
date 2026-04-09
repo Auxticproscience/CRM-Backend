@@ -1,7 +1,5 @@
 package com.crm.zonas.service;
 
-import com.auxticproscience.crm.service.OneDriveService;
-import com.auxticproscience.crm.service.OneDriveService.ArchivoOneDrive;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -32,14 +30,14 @@ public class SchedulerService {
         log.info("=== Scheduler iniciado: buscando archivos en OneDrive ===");
         try {
             String token = oneDriveService.obtenerToken();
-            List<ArchivoOneDrive> archivos = oneDriveService.listarArchivosXlsx(token);
+            List<OneDriveService.ArchivoOneDrive> archivos = oneDriveService.listarArchivosXlsx(token);
 
             if (archivos.isEmpty()) {
                 log.info("No se encontraron archivos .xlsx en la carpeta de OneDrive.");
                 return;
             }
 
-            for (ArchivoOneDrive archivo : archivos) {
+            for (OneDriveService.ArchivoOneDrive archivo : archivos) {
                 procesarArchivo(token, archivo);
             }
 
@@ -57,7 +55,7 @@ public class SchedulerService {
 
     // ─── Detección de prefijo y despacho al parser correcto ──────────────────
 
-    private void procesarArchivo(String token, ArchivoOneDrive archivo) {
+    private void procesarArchivo(String token, OneDriveService.ArchivoOneDrive archivo) {
         String nombre = archivo.nombre().toLowerCase();
         log.info("Procesando: {}", archivo.nombre());
 
