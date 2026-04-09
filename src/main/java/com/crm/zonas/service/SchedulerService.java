@@ -56,7 +56,7 @@ public class SchedulerService {
     // ─── Detección de prefijo y despacho al parser correcto ──────────────────
 
     private void procesarArchivo(String token, OneDriveService.ArchivoOneDrive archivo) {
-        String nombre = archivo.nombre().toLowerCase();
+        String nombre = archivo.nombre().toLowerCase().trim();
         log.info("Procesando: {}", archivo.nombre());
 
         try {

@@ -53,14 +53,6 @@ public class ExcelParserService {
         return procesarStream(stream, nombreArchivo);
     }
 
-    // ─────────────────────────────────────────────────────────────
-    // Entrada desde el endpoint REST (carga manual desde el front)
-    // ─────────────────────────────────────────────────────────────
-
-    /**
-     * Llamado por el controller REST con un MultipartFile subido manualmente.
-     * Delega en el núcleo de procesamiento común.
-     */
     @Transactional
     public CargaResultadoDTO procesarExcel(MultipartFile file) throws IOException {
         return procesarStream(file.getInputStream(), file.getOriginalFilename());
