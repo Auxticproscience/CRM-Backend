@@ -84,20 +84,17 @@ public class OneDriveService {
         String url = "https://graph.microsoft.com/v1.0/users/"
                 + userId + "/drive/root/children";
 
-
-        JsonNode items = null;
-        for (JsonNode item : items) {
-            log.info("ITEM: {}", item.get("name").asText());
-        }
-
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(token);
 
         ResponseEntity<String> response = restTemplate.exchange(
                 url, HttpMethod.GET, new HttpEntity<>(headers), String.class);
 
-        JsonNode root = mapper.readTree(response.getBody());
-        items = root.get("value");
+        JsonNode root  = mapper.readTree(response.getBody());
+        JsonNode items = root.get("value");
+        for (JsonNode item : items) {
+            log.info("ITEM: {}", item.get("name").asText());
+        }
 
         List<ArchivoOneDrive> archivos = new ArrayList<>();
         if (items != null && items.isArray()) {
