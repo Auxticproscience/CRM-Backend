@@ -22,10 +22,11 @@ public class SchedulerService {
     }
 
     /**
-     * Se ejecuta cada día a las 3:00 PM hora Colombia (UTC-5).
+     * Se ejecuta cada día a las 8:20 AM hora Colombia (UTC-5).
      * Cron: segundo minuto hora día mes día-semana
+     * Fin de semana a las 10:00
      */
-    @Scheduled(cron = "0 0 8 * * *", zone = "America/Bogota")
+    @Scheduled(cron = "0 20 8 * * *", zone = "America/Bogota")
     public void procesarArchivosDelDia() {
         log.info("=== Scheduler iniciado: buscando archivos en OneDrive ===");
         try {
