@@ -14,11 +14,15 @@ public class SchedulerService {
     private static final Logger log = LoggerFactory.getLogger(SchedulerService.class);
 
     private final OneDriveService oneDriveService;
-    private final ExcelParserService gestionesParser;
+    private final GestionesExcelParserService gestionesParser;
+    private final CotizacionesParserService cotizacionesParser;
+
+
     public SchedulerService(OneDriveService oneDriveService,
-                            ExcelParserService gestionesParser) {
+                            GestionesExcelParserService gestionesParser, CotizacionesParserService cotizacionesParser) {
         this.oneDriveService = oneDriveService;
         this.gestionesParser = gestionesParser;
+        this.cotizacionesParser = cotizacionesParser;
     }
 
     /**
@@ -73,8 +77,8 @@ public class SchedulerService {
                 log.warn("  → PedidosParser pendiente, archivo ignorado: {}", archivo.nombre());
 
             } else if (nombre.startsWith("cot_")) {
-                // cotizacionesParser.parsearYGuardar(stream, archivo.nombre());
-                log.warn("  → CotizacionesParser pendiente, archivo ignorado: {}", archivo.nombre());
+                cotizacionesParser.parsearYGuardar(stream, archivo.nombre());
+                log.info("  → CotizacionesParser OK");
 
             } else {
                 log.warn("  → Prefijo desconocido en '{}', ignorado.", archivo.nombre());

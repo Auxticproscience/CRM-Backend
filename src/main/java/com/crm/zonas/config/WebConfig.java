@@ -1,15 +1,15 @@
 package com.crm.zonas.config;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.*;
 
 @Configuration
 public class WebConfig implements WebMvcConfigurer {
 
-    /**
-     * Permite peticiones desde cualquier origen (útil durante desarrollo).
-     * En producción reemplazar "*" por el dominio real del frontend.
-     */
+    @Value("${url.frontend}")
+    private String userId;
+
     @Override
     public void addCorsMappings(CorsRegistry registry) {
         registry.addMapping("/api/**")

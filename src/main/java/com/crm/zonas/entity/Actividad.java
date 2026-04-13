@@ -13,7 +13,7 @@ import java.time.OffsetDateTime;
     )
 )
 @Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
-public class Actividad {
+public class  Actividad {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

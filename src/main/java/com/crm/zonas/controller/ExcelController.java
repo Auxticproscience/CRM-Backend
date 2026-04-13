@@ -2,7 +2,8 @@ package com.crm.zonas.controller;
 
 import com.crm.zonas.dto.CargaResultadoDTO;
 import com.crm.zonas.exception.ArchivoInvalidoException;
-import com.crm.zonas.service.ExcelParserService;
+import com.crm.zonas.service.CotizacionesParserService;
+import com.crm.zonas.service.GestionesExcelParserService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -13,12 +14,14 @@ import org.springframework.web.multipart.MultipartFile;
 @RequiredArgsConstructor
 public class ExcelController {
 
-    private final ExcelParserService parser;
+    private final GestionesExcelParserService gestionesParser;
+    private final CotizacionesParserService   cotizacionesParser;
 
     /**
      * POST /api/excel/cargar
-     * Content-Type: multipart/form-data
-     * Param:        file → archivo .xlsx
+     * Detecta el tipo de archivo por el prefijo del nombre:
+     *   ges_*.xlsx  → GestionesExcelParserService
+     *   cot_*.xlsx  → CotizacionesParserService
      */
     @PostMapping("/cargar")
     public ResponseEntity<CargaResultadoDTO> cargar(
@@ -33,6 +36,18 @@ public class ExcelController {
             throw new ArchivoInvalidoException("Solo se aceptan archivos .xlsx");
         }
 
-        return ResponseEntity.ok(parser.procesarExcel(file));
+        String nombre = filename.toLowerCase();
+
+        if (nombre.startsWith("ges_")) {
+            return ResponseEntity.ok(gestionesParser.procesarExcel(file));
+        }
+
+        if (nombre.startsWith("cot_")) {
+            return ResponseEntity.ok(
+                    cotizacionesParser.procesarExcel(file.getInputStream(), filename));
+        }
+
+        throw new ArchivoInvalidoException(
+                "Prefijo de archivo no reconocido. Use ges_*.xlsx o cot_*.xlsx");
     }
 }

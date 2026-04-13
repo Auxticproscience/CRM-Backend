@@ -18,10 +18,6 @@ public class ActividadController {
 
     private final ActividadService actividadService;
 
-    /**
-     * GET /api/actividades
-     * GET /api/actividades?propietarioId=1
-     */
     @GetMapping
     public ResponseEntity<List<ActividadDTO>> listar(
             @RequestParam(required = false) Integer propietarioId) {
@@ -34,10 +30,6 @@ public class ActividadController {
         return ResponseEntity.ok(result);
     }
 
-    /**
-     * GET /api/actividades/historial-cargas
-     * Últimas 10 importaciones de Excel
-     */
     @GetMapping("/historial-cargas")
     public ResponseEntity<List<CargaHistorialDTO>> historial() {
         List<CargaHistorialDTO> result = actividadService.historialCargas()
@@ -46,8 +38,6 @@ public class ActividadController {
             .toList();
         return ResponseEntity.ok(result);
     }
-
-    // ── mappers ──────────────────────────────────────────────────
 
     private ActividadDTO toDTO(Actividad a) {
         return new ActividadDTO(

@@ -20,7 +20,7 @@ import java.util.*;
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class ExcelParserService {
+public class GestionesExcelParserService {
 
     private final ActividadRepository    actividadRepo;
     private final EstadoRepository       estadoRepo;
