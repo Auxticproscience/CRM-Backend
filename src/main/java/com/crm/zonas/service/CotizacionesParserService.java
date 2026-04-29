@@ -95,6 +95,9 @@ public class CotizacionesParserService {
                     BigDecimal valorTotal = parseDecimal(
                             row.getCell(COL_VALOR_TOTAL), fmt);
 
+                    String pedidoErp = texto(row.getCell(COL_PEDIDO_ERP), fmt);
+                    boolean tienePedidoErp = pedidoErp != null && !pedidoErp.trim().isBlank();
+
                     if (numeroCot.isBlank() || propNombre.isBlank()
                             || creadoPorNombre.isBlank() || fechaCreacion == null || valorTotal == null) {
                         omitidos++;
@@ -154,7 +157,7 @@ public class CotizacionesParserService {
                                     row.getCell(COL_VALOR_DESC_GLOBAL), fmt))
                             .valorTotal(parseDecimal(
                                     row.getCell(COL_VALOR_TOTAL), fmt))
-                            .pedidoErp(texto(row.getCell(COL_PEDIDO_ERP), fmt))
+                            .pedidoErp(tienePedidoErp ? pedidoErp : null)
                             .rowidErp(parseDecimal(
                                     row.getCell(COL_ROWID_ERP), fmt))
                             .notasPedido(texto(row.getCell(COL_NOTAS_PEDIDO), fmt))
@@ -245,7 +248,11 @@ public class CotizacionesParserService {
 
     private String texto(Cell cell, DataFormatter fmt) {
         if (cell == null) return "";
-        return fmt.formatCellValue(cell).trim().replaceAll("\\s+", " ");
+
+        return fmt.formatCellValue(cell)
+                .replace("\u00A0", " ")
+                .trim()
+                .replaceAll("\\s+", " ");
     }
 
     private OffsetDateTime parseFechaHora(Cell cell, FormulaEvaluator ev) {
