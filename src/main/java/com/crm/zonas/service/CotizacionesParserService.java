@@ -157,6 +157,19 @@ public class CotizacionesParserService {
                             .notasPedido(texto(row.getCell(COL_NOTAS_PEDIDO), fmt))
                             .build();
 
+                    BigDecimal valorTotal = parseDecimal(
+                            row.getCell(COL_VALOR_TOTAL), fmt);
+
+                    if (numeroCot.isBlank() || propNombre.isBlank()
+                            || creadoPorNombre.isBlank()
+                            || fechaCreacion == null
+                            || valorTotal == null) {
+
+                        omitidos++;
+                        errores.add("Fila " + (i + 1) + ": faltan campos obligatorios (incluye valor_total)");
+                        continue;
+                    }
+
                     cotizacionRepo.save(c);
                     cargados++;
 
