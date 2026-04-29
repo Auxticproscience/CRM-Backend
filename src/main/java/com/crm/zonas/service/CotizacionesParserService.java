@@ -40,7 +40,7 @@ public class CotizacionesParserService {
     private static final int COL_CREADO_POR           = 4;
     private static final int COL_VALOR_TOTAL          = 5;
     private static final int COL_TIPO_CLIENTE         = 6;
-    private static final int COL_FACTURAR_A           = 7;   // → cliente
+    private static final int COL_FACTURAR_A           = 7;
     private static final int COL_CENTRO_OPERACION     = 8;
     private static final int COL_FECHA_ENTREGA        = 9;
     private static final int COL_LISTA_PRECIOS        = 10;
@@ -86,7 +86,6 @@ public class CotizacionesParserService {
                 if (row == null) continue;
 
                 try {
-                    // ── Campos obligatorios ───────────────────────
                     String numeroCot = texto(row.getCell(COL_NUMERO_COTIZACION), fmt);
                     String propNombre = texto(row.getCell(COL_PROPIETARIO), fmt);
                     String creadoPorNombre = texto(row.getCell(COL_CREADO_POR), fmt);

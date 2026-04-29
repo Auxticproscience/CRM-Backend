@@ -30,7 +30,6 @@ public class GestionesExcelParserService {
     private final LugarRepository        lugarRepo;
     private final CargaExcelRepository   cargaRepo;
 
-    // ── Índices de columna ────────────────────────────────────────
     private static final int COL_FECHA        = 0;
     private static final int COL_DESCRIPCION  = 1;
     private static final int COL_NOMBRE       = 2;
@@ -40,48 +39,34 @@ public class GestionesExcelParserService {
     private static final int COL_ESTADO       = 7;
     private static final int COL_TIPO         = 8;
 
-    // ─────────────────────────────────────────────────────────────
-    // Entrada desde el scheduler (OneDrive → InputStream)
-    // ─────────────────────────────────────────────────────────────
+    public CargaResultadoDTO procesarStream(InputStream inputStream, String nombreArchivo) throws IOException {
 
-    /**
-     * Llamado por el SchedulerService al descargar un archivo de OneDrive.
-     * Delega en el núcleo de procesamiento común.
-     */
-    @Transactional
-    public CargaResultadoDTO parsearYGuardar(ByteArrayInputStream stream, String nombreArchivo) throws IOException {
-        return procesarStream(stream, nombreArchivo);
-    }
+        int insertados = 0;
+        int duplicados = 0;
+        int invalidos = 0;
+        int erroresDb = 0;
 
-    @Transactional
-    public CargaResultadoDTO procesarExcel(MultipartFile file) throws IOException {
-        return procesarStream(file.getInputStream(), file.getOriginalFilename());
-    }
-
-
-    private CargaResultadoDTO procesarStream(InputStream inputStream, String nombreArchivo) throws IOException {
-
-        int cargados = 0, omitidos = 0;
-        List<String> errores = new ArrayList<>();
+        List<String> logs = new ArrayList<>();
 
         try (Workbook wb = new XSSFWorkbook(inputStream)) {
+
             Sheet sheet = wb.getSheetAt(0);
             DataFormatter fmt = new DataFormatter();
             FormulaEvaluator evaluator = wb.getCreationHelper().createFormulaEvaluator();
 
-            // Fila 0 = encabezados → empezar en fila 1
             for (int i = 1; i <= sheet.getLastRowNum(); i++) {
+
                 Row row = sheet.getRow(i);
                 if (row == null) continue;
 
                 try {
-                    OffsetDateTime fecha  = parseFecha(row.getCell(COL_FECHA), evaluator);
-                    String nombre         = texto(row.getCell(COL_NOMBRE), fmt);
-                    String propNombre     = texto(row.getCell(COL_PROPIETARIO), fmt);
+                    OffsetDateTime fecha = parseFecha(row.getCell(COL_FECHA), evaluator);
+                    String nombre = texto(row.getCell(COL_NOMBRE), fmt);
+                    String propNombre = texto(row.getCell(COL_PROPIETARIO), fmt);
 
                     if (fecha == null || nombre.isBlank() || propNombre.isBlank()) {
-                        omitidos++;
-                        errores.add("Fila " + (i + 1) + ": fecha/nombre/propietario vacío");
+                        invalidos++;
+                        logs.add("Fila " + (i + 1) + " inválida (campos obligatorios)");
                         continue;
                     }
 
@@ -92,10 +77,13 @@ public class GestionesExcelParserService {
                                             .nombre(propNombre.toUpperCase())
                                             .build()));
 
-                    // Deduplicación
-                    if (actividadRepo.existsByFechaCreacionAndNombreAndPropietarioId(
-                            fecha, nombre, propietario.getId())) {
-                        omitidos++;
+                    boolean existe = actividadRepo
+                            .existsByFechaCreacionAndNombreAndPropietarioId(
+                                    fecha, nombre, propietario.getId());
+
+                    if (existe) {
+                        duplicados++;
+                        logs.add("Fila " + (i + 1) + " duplicada");
                         continue;
                     }
 
@@ -111,32 +99,38 @@ public class GestionesExcelParserService {
                             .build();
 
                     actividadRepo.save(a);
-                    cargados++;
+                    insertados++;
 
                 } catch (Exception e) {
-                    log.warn("Fila {} omitida por error: {}", i + 1, e.getMessage());
-                    errores.add("Fila " + (i + 1) + ": " + e.getMessage());
-                    omitidos++;
+                    erroresDb++;
+                    logs.add("Fila " + (i + 1) + " error DB: " + e.getMessage());
+                    log.warn("Error fila {}: {}", i + 1, e.getMessage());
                 }
             }
         }
 
-        // Auditoría
         CargaExcel registro = CargaExcel.builder()
                 .nombreArchivo(nombreArchivo)
-                .registrosCargados(cargados)
-                .registrosOmitidos(omitidos)
-                .notas(errores.isEmpty() ? null : String.join(" | ", errores))
+                .registrosCargados(insertados)
+                .registrosOmitidos(invalidos + duplicados + erroresDb)
+                .notas(String.join(" | ", logs))
                 .build();
+
         cargaRepo.save(registro);
 
-        log.info("Carga finalizada — archivo: {}, insertados: {}, omitidos: {}",
-                nombreArchivo, cargados, omitidos);
+        log.info("""
+            Carga finalizada:
+            archivo: {}
+            insertados: {}
+            duplicados: {}
+            invalidos: {}
+            erroresDB: {}
+        """, nombreArchivo, insertados, duplicados, invalidos, erroresDb);
 
         return new CargaResultadoDTO(
                 nombreArchivo,
-                cargados,
-                omitidos,
+                insertados,
+                invalidos + duplicados + erroresDb,
                 registro.getFechaCarga(),
                 registro.getNotas()
         );
@@ -150,31 +144,21 @@ public class GestionesExcelParserService {
     private OffsetDateTime parseFecha(Cell cell, FormulaEvaluator ev) {
         if (cell == null) return null;
 
-        CellType type = cell.getCellType() == CellType.FORMULA
-                ? ev.evaluateFormulaCell(cell)
-                : cell.getCellType();
-
-        if (type == CellType.NUMERIC && DateUtil.isCellDateFormatted(cell)) {
-            return cell.getLocalDateTimeCellValue().atOffset(ZoneOffset.UTC);
-        }
-        if (type == CellType.STRING) {
-            String s = cell.getStringCellValue().trim().replaceAll("\\s+", " ");
-            for (String pattern : List.of(
-                    "dd/MM/yyyy HH:mm", "dd/MM/yyyy H:mm",
-                    "yyyy-MM-dd HH:mm", "yyyy-MM-dd H:mm",
-                    "yyyy-MM-dd", "dd/MM/yyyy", "MM/dd/yyyy",
-                    "dd-MM-yyyy", "yyyy/MM/dd")) {
-                try {
-                    java.time.format.DateTimeFormatter dtf =
-                            java.time.format.DateTimeFormatter.ofPattern(pattern);
-                    try {
-                        return java.time.LocalDateTime.parse(s, dtf).atOffset(ZoneOffset.UTC);
-                    } catch (Exception ignored) {
-                        return LocalDate.parse(s, dtf).atStartOfDay().atOffset(ZoneOffset.UTC);
-                    }
-                } catch (Exception ignored) {}
+        try {
+            if (cell.getCellType() == CellType.NUMERIC && DateUtil.isCellDateFormatted(cell)) {
+                return cell.getLocalDateTimeCellValue().atOffset(ZoneOffset.UTC);
             }
-        }
+
+            if (cell.getCellType() == CellType.STRING) {
+                String s = cell.getStringCellValue().trim();
+
+                java.time.format.DateTimeFormatter dtf =
+                        java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm");
+
+                return java.time.LocalDateTime.parse(s, dtf).atOffset(ZoneOffset.UTC);
+            }
+        } catch (Exception ignored) {}
+
         return null;
     }
 
@@ -182,32 +166,27 @@ public class GestionesExcelParserService {
         if (nombre.isBlank()) return null;
         return estadoRepo.findByNombreIgnoreCase(nombre)
                 .orElseGet(() -> estadoRepo.save(
-                        Estado.builder().nombre(capitalize(nombre)).build()));
+                        Estado.builder().nombre(nombre).build()));
     }
 
     private Tipo resolverTipo(String nombre) {
         if (nombre.isBlank()) return null;
         return tipoRepo.findByNombreIgnoreCase(nombre)
                 .orElseGet(() -> tipoRepo.save(
-                        Tipo.builder().nombre(capitalize(nombre)).build()));
+                        Tipo.builder().nombre(nombre).build()));
     }
 
     private Cliente resolverCliente(String nombre) {
         if (nombre.isBlank()) return null;
         return clienteRepo.findByNombreIgnoreCase(nombre)
                 .orElseGet(() -> clienteRepo.save(
-                        Cliente.builder().nombre(capitalize(nombre)).build()));
+                        Cliente.builder().nombre(nombre).build()));
     }
 
     private Lugar resolverLugar(String nombre) {
         if (nombre.isBlank()) return null;
         return lugarRepo.findByNombreIgnoreCase(nombre)
                 .orElseGet(() -> lugarRepo.save(
-                        Lugar.builder().nombre(capitalize(nombre)).build()));
-    }
-
-    private String capitalize(String s) {
-        if (s == null || s.isBlank()) return s;
-        return s.substring(0, 1).toUpperCase() + s.substring(1).toLowerCase();
+                        Lugar.builder().nombre(nombre).build()));
     }
 }
