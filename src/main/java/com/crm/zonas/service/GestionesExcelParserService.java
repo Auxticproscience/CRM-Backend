@@ -30,6 +30,7 @@ public class GestionesExcelParserService {
     private final LugarRepository        lugarRepo;
     private final CargaExcelRepository   cargaRepo;
 
+    // ── Índices de columna ────────────────────────────────────────
     private static final int COL_FECHA        = 0;
     private static final int COL_DESCRIPCION  = 1;
     private static final int COL_NOMBRE       = 2;
@@ -38,6 +39,25 @@ public class GestionesExcelParserService {
     private static final int COL_CLIENTE      = 5;
     private static final int COL_ESTADO       = 7;
     private static final int COL_TIPO         = 8;
+
+    // ─────────────────────────────────────────────────────────────
+    // Entrada desde el scheduler (OneDrive → InputStream)
+    // ─────────────────────────────────────────────────────────────
+
+    /**
+     * Llamado por el SchedulerService al descargar un archivo de OneDrive.
+     * Delega en el núcleo de procesamiento común.
+     */
+    @Transactional
+    public CargaResultadoDTO parsearYGuardar(ByteArrayInputStream stream, String nombreArchivo) throws IOException {
+        return procesarStream(stream, nombreArchivo);
+    }
+
+    @Transactional
+    public CargaResultadoDTO procesarExcel(MultipartFile file) throws IOException {
+        return procesarStream(file.getInputStream(), file.getOriginalFilename());
+    }
+
 
     public CargaResultadoDTO procesarStream(InputStream inputStream, String nombreArchivo) throws IOException {
 
