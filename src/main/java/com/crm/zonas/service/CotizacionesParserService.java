@@ -92,8 +92,11 @@ public class CotizacionesParserService {
                     OffsetDateTime fechaCreacion = parseFechaHora(
                             row.getCell(COL_FECHA_CREACION), evaluator);
 
+                    BigDecimal valorTotal = parseDecimal(
+                            row.getCell(COL_VALOR_TOTAL), fmt);
+
                     if (numeroCot.isBlank() || propNombre.isBlank()
-                            || creadoPorNombre.isBlank() || fechaCreacion == null) {
+                            || creadoPorNombre.isBlank() || fechaCreacion == null || valorTotal == null) {
                         omitidos++;
                         errores.add("Fila " + (i + 1) + ": campos obligatorios vacíos");
                         continue;
@@ -156,19 +159,6 @@ public class CotizacionesParserService {
                                     row.getCell(COL_ROWID_ERP), fmt))
                             .notasPedido(texto(row.getCell(COL_NOTAS_PEDIDO), fmt))
                             .build();
-
-                    BigDecimal valorTotal = parseDecimal(
-                            row.getCell(COL_VALOR_TOTAL), fmt);
-
-                    if (numeroCot.isBlank() || propNombre.isBlank()
-                            || creadoPorNombre.isBlank()
-                            || fechaCreacion == null
-                            || valorTotal == null) {
-
-                        omitidos++;
-                        errores.add("Fila " + (i + 1) + ": faltan campos obligatorios (incluye valor_total)");
-                        continue;
-                    }
 
                     cotizacionRepo.save(c);
                     cargados++;
