@@ -5,8 +5,11 @@ import com.crm.zonas.dto.CotizacionDTO;
 import com.crm.zonas.entity.CargaExcel;
 import com.crm.zonas.entity.Cotizacion;
 import com.crm.zonas.service.CotizacionService;
-import com.crm.zonas.service.CotizacionesParserService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -19,32 +22,56 @@ import java.util.List;
 @RequiredArgsConstructor
 public class CotizacionController {
 
-    private final CotizacionService  cotizacionService;
+    private final CotizacionService cotizacionService;
 
     /**
      * GET /api/cotizaciones
+     *
      * Parámetros opcionales:
      *   ?propietarioId=1
      *   ?clienteId=5
      *   ?centroId=3
      *   ?desde=2026-04-01
      *   ?hasta=2026-04-13
+     *   ?page=0
+     *   ?size=50
      */
     @GetMapping
-    public ResponseEntity<List<CotizacionDTO>> listar(
+    public ResponseEntity<Page<CotizacionDTO>> listar(
             @RequestParam(required = false) Integer propietarioId,
             @RequestParam(required = false) Integer clienteId,
             @RequestParam(required = false) Integer centroId,
-            @RequestParam(required = false)
-            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate desde,
-            @RequestParam(required = false)
-            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate hasta) {
 
-        List<CotizacionDTO> result = cotizacionService
-                .listar(propietarioId, clienteId, centroId, desde, hasta)
-                .stream()
-                .map(this::toDTO)
-                .toList();
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
+            LocalDate desde,
+
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
+            LocalDate hasta,
+
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "50") int size) {
+
+        // Protección para evitar peticiones gigantes.
+        int pageSize = Math.min(Math.max(size, 1), 200);
+
+        Pageable pageable = PageRequest.of(
+                Math.max(page, 0),
+                pageSize,
+                Sort.by(Sort.Direction.DESC, "fechaCreacion")
+        );
+
+        Page<CotizacionDTO> result = cotizacionService
+                .listar(
+                        propietarioId,
+                        clienteId,
+                        centroId,
+                        desde,
+                        hasta,
+                        pageable
+                )
+                .map(this::toDTO);
 
         return ResponseEntity.ok(result);
     }
@@ -61,7 +88,6 @@ public class CotizacionController {
 
     /**
      * GET /api/cotizaciones/historial-cargas
-     * Mismo patrón que /api/actividades/historial-cargas
      */
     @GetMapping("/historial-cargas")
     public ResponseEntity<List<CargaHistorialDTO>> historial() {
@@ -69,10 +95,9 @@ public class CotizacionController {
                 .stream()
                 .map(this::toCargaDTO)
                 .toList();
+
         return ResponseEntity.ok(result);
     }
-
-    // ── Mappers ───────────────────────────────────────────────────
 
     private CotizacionDTO toDTO(Cotizacion c) {
         return new CotizacionDTO(

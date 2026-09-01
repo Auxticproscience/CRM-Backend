@@ -5,11 +5,13 @@ import com.crm.zonas.entity.Cotizacion;
 import com.crm.zonas.repository.CargaExcelRepository;
 import com.crm.zonas.repository.CotizacionRepository;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.Sort;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
-import java.util.List;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.Optional;
 
 @Service
@@ -19,36 +21,39 @@ public class CotizacionService {
     private final CotizacionRepository cotizacionRepo;
     private final CargaExcelRepository cargaRepo;
 
-    public List<Cotizacion> listar(Integer propietarioId,
-                                   Integer clienteId,
-                                   Integer centroId,
-                                   LocalDate desde,
-                                   LocalDate hasta) {
+    public Page<Cotizacion> listar(
+            Integer propietarioId,
+            Integer clienteId,
+            Integer centroId,
+            LocalDate desde,
+            LocalDate hasta,
+            Pageable pageable) {
 
-        return cotizacionRepo
-                .findAll(Sort.by(Sort.Direction.DESC, "fechaCreacion"))
-                .stream()
-                .filter(c -> propietarioId == null ||
-                        (c.getPropietario() != null &&
-                                c.getPropietario().getId().equals(propietarioId)))
-                .filter(c -> clienteId == null ||
-                        (c.getCliente() != null &&
-                                c.getCliente().getId().equals(clienteId)))
-                .filter(c -> centroId == null ||
-                        (c.getCentroOperacion() != null &&
-                                c.getCentroOperacion().getId().equals(centroId)))
-                .filter(c -> desde == null ||
-                        !c.getFechaCreacion().toLocalDate().isBefore(desde))
-                .filter(c -> hasta == null ||
-                        !c.getFechaCreacion().toLocalDate().isAfter(hasta))
-                .toList();
+        OffsetDateTime fechaDesde = desde != null
+                ? desde.atStartOfDay().atOffset(ZoneOffset.UTC)
+                : null;
+
+        OffsetDateTime fechaHasta = hasta != null
+                ? hasta.plusDays(1)
+                .atStartOfDay()
+                .atOffset(ZoneOffset.UTC)
+                : null;
+
+        return cotizacionRepo.buscarConFiltros(
+                propietarioId,
+                clienteId,
+                centroId,
+                fechaDesde,
+                fechaHasta,
+                pageable
+        );
     }
 
     public Optional<Cotizacion> porId(Integer id) {
         return cotizacionRepo.findById(id);
     }
 
-    public List<CargaExcel> historialCargas() {
+    public java.util.List<CargaExcel> historialCargas() {
         return cargaRepo
                 .findTop10ByOrderByFechaCargaDesc()
                 .stream()
