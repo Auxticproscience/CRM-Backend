@@ -16,6 +16,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.time.*;
 import java.util.*;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -30,7 +32,6 @@ public class GestionesExcelParserService {
     private final LugarRepository        lugarRepo;
     private final CargaExcelRepository   cargaRepo;
 
-    // ── Índices de columna ────────────────────────────────────────
     private static final int COL_FECHA        = 0;
     private static final int COL_DESCRIPCION  = 1;
     private static final int COL_NOMBRE       = 2;
@@ -39,15 +40,8 @@ public class GestionesExcelParserService {
     private static final int COL_CLIENTE      = 5;
     private static final int COL_ESTADO       = 7;
     private static final int COL_TIPO         = 8;
+    private static final int BATCH_SIZE       = 500;
 
-    // ─────────────────────────────────────────────────────────────
-    // Entrada desde el scheduler (OneDrive → InputStream)
-    // ─────────────────────────────────────────────────────────────
-
-    /**
-     * Llamado por el SchedulerService al descargar un archivo de OneDrive.
-     * Delega en el núcleo de procesamiento común.
-     */
     @Transactional
     public CargaResultadoDTO parsearYGuardar(ByteArrayInputStream stream, String nombreArchivo) throws IOException {
         return procesarStream(stream, nombreArchivo);
@@ -67,12 +61,37 @@ public class GestionesExcelParserService {
         int erroresDb = 0;
 
         List<String> logs = new ArrayList<>();
+        List<Actividad> lote = new ArrayList<>(BATCH_SIZE);
+        Set<String> actividadesExistentes = new HashSet<>();
+        Set<String> actividadesProcesadas = new HashSet<>();
 
         try (Workbook wb = new XSSFWorkbook(inputStream)) {
 
             Sheet sheet = wb.getSheetAt(0);
             DataFormatter fmt = new DataFormatter();
             FormulaEvaluator evaluator = wb.getCreationHelper().createFormulaEvaluator();
+
+            Map<String, Propietario> propietarios = cargarPorNombre(propietarioRepo.findAll(), Propietario::getNombre);
+            Map<String, Estado> estados = cargarPorNombre(estadoRepo.findAll(), Estado::getNombre);
+            Map<String, Tipo> tipos = cargarPorNombre(tipoRepo.findAll(), Tipo::getNombre);
+            Map<String, Cliente> clientes = cargarPorNombre(clienteRepo.findAll(), Cliente::getNombre);
+            Map<String, Lugar> lugares = cargarPorNombre(lugarRepo.findAll(), Lugar::getNombre);
+
+            for (Actividad actividad : actividadRepo.findAll()) {
+                if (actividad.getFechaCreacion() != null
+                        && actividad.getNombre() != null
+                        && actividad.getPropietario() != null
+                        && actividad.getPropietario().getId() != null) {
+
+                    actividadesExistentes.add(
+                            claveActividad(
+                                    actividad.getFechaCreacion(),
+                                    actividad.getNombre(),
+                                    actividad.getPropietario().getId()
+                            )
+                    );
+                }
+            }
 
             for (int i = 1; i <= sheet.getLastRowNum(); i++) {
 
@@ -89,21 +108,29 @@ public class GestionesExcelParserService {
                         logs.add("Fila " + (i + 1) + " inválida (campos obligatorios)");
                         continue;
                     }
+                    if(!lote.isEmpty()){
+                        actividadRepo.saveAll(lote);
+                        actividadRepo.flush();
+                        lote.clear();
+                    }
 
-                    Propietario propietario = propietarioRepo
-                            .findByNombreIgnoreCase(propNombre)
-                            .orElseGet(() -> propietarioRepo.save(
-                                    Propietario.builder()
-                                            .nombre(propNombre.toUpperCase())
-                                            .build()));
+                    Propietario propietario = resolverPropietario(propNombre, propietarios);
 
-                    boolean existe = actividadRepo
-                            .existsByFechaCreacionAndNombreAndPropietarioId(
-                                    fecha, nombre, propietario.getId());
+                    String clave = claveActividad(
+                            fecha,
+                            nombre,
+                            propietario.getId()
+                    );
 
-                    if (existe) {
+                    if (!actividadesProcesadas.add(clave)) {
                         duplicados++;
-                        logs.add("Fila " + (i + 1) + " duplicada");
+                        logs.add("Fila " + (i + 1) + " duplicada dentro del archivo");
+                        continue;
+                    }
+
+                    if (actividadesExistentes.contains(clave)) {
+                        duplicados++;
+                        logs.add("Fila " + (i + 1) + " duplicada en la base de datos");
                         continue;
                     }
 
@@ -111,15 +138,22 @@ public class GestionesExcelParserService {
                             .fechaCreacion(fecha)
                             .nombre(nombre)
                             .descripcion(texto(row.getCell(COL_DESCRIPCION), fmt))
-                            .estado(resolverEstado(texto(row.getCell(COL_ESTADO), fmt)))
-                            .tipo(resolverTipo(texto(row.getCell(COL_TIPO), fmt)))
+                            .estado(resolverEstado(texto(row.getCell(COL_ESTADO), fmt), estados))
+                            .tipo(resolverTipo(texto(row.getCell(COL_TIPO), fmt), tipos))
                             .propietario(propietario)
-                            .cliente(resolverCliente(texto(row.getCell(COL_CLIENTE), fmt)))
-                            .lugar(resolverLugar(texto(row.getCell(COL_LUGAR), fmt)))
+                            .cliente(resolverCliente(texto(row.getCell(COL_CLIENTE), fmt), clientes))
+                            .lugar(resolverLugar(texto(row.getCell(COL_LUGAR), fmt), lugares))
                             .build();
 
-                    actividadRepo.save(a);
+                    lote.add(a);
+                    actividadesExistentes.add(clave);
                     insertados++;
+
+                    if (lote.size() >= BATCH_SIZE) {
+                        actividadRepo.saveAll(lote);
+                        actividadRepo.flush();
+                        lote.clear();
+                    }
 
                 } catch (Exception e) {
                     erroresDb++;
@@ -182,31 +216,59 @@ public class GestionesExcelParserService {
         return null;
     }
 
-    private Estado resolverEstado(String nombre) {
-        if (nombre.isBlank()) return null;
-        return estadoRepo.findByNombreIgnoreCase(nombre)
-                .orElseGet(() -> estadoRepo.save(
-                        Estado.builder().nombre(nombre).build()));
+    private <T> Map<String, T> cargarPorNombre(List<T> entidades, Function<T, String> extractor) {
+        return entidades.stream()
+                .filter(Objects::nonNull)
+                .filter(e -> extractor.apply(e) != null && !extractor.apply(e).isBlank())
+                .collect(Collectors.toMap(
+                        e -> normalizar(extractor.apply(e)),
+                        Function.identity(),
+                        (existente, ignorado) -> existente,
+                        HashMap::new
+                ));
     }
 
-    private Tipo resolverTipo(String nombre) {
-        if (nombre.isBlank()) return null;
-        return tipoRepo.findByNombreIgnoreCase(nombre)
-                .orElseGet(() -> tipoRepo.save(
-                        Tipo.builder().nombre(nombre).build()));
+    private Propietario resolverPropietario(String nombre, Map<String, Propietario> cache) {
+        String key = normalizar(nombre);
+        Propietario existente = cache.get(key);
+        if (existente != null) return existente;
+
+        Propietario nuevo = propietarioRepo.save(
+                Propietario.builder().nombre(nombre.trim().toUpperCase()).build());
+        cache.put(key, nuevo);
+        return nuevo;
     }
 
-    private Cliente resolverCliente(String nombre) {
+    private Estado resolverEstado(String nombre, Map<String, Estado> cache) {
         if (nombre.isBlank()) return null;
-        return clienteRepo.findByNombreIgnoreCase(nombre)
-                .orElseGet(() -> clienteRepo.save(
-                        Cliente.builder().nombre(nombre).build()));
+        return cache.computeIfAbsent(normalizar(nombre), key ->
+                estadoRepo.save(Estado.builder().nombre(nombre.trim()).build()));
     }
 
-    private Lugar resolverLugar(String nombre) {
+    private Tipo resolverTipo(String nombre, Map<String, Tipo> cache) {
         if (nombre.isBlank()) return null;
-        return lugarRepo.findByNombreIgnoreCase(nombre)
-                .orElseGet(() -> lugarRepo.save(
-                        Lugar.builder().nombre(nombre).build()));
+        return cache.computeIfAbsent(normalizar(nombre), key ->
+                tipoRepo.save(Tipo.builder().nombre(nombre.trim()).build()));
+    }
+
+    private Cliente resolverCliente(String nombre, Map<String, Cliente> cache) {
+        if (nombre.isBlank()) return null;
+        return cache.computeIfAbsent(normalizar(nombre), key ->
+                clienteRepo.save(Cliente.builder().nombre(nombre.trim()).build()));
+    }
+
+    private Lugar resolverLugar(String nombre, Map<String, Lugar> cache) {
+        if (nombre.isBlank()) return null;
+        return cache.computeIfAbsent(normalizar(nombre), key ->
+                lugarRepo.save(Lugar.builder().nombre(nombre.trim()).build()));
+    }
+
+    private String claveActividad( OffsetDateTime fecha,
+                                   String nombre, Integer propietarioId){
+        return fecha + "|" + normalizar(nombre) + "|" + propietarioId;
+    }
+
+    private String normalizar(String valor) {
+        return valor == null ? "" : valor.trim().replaceAll("\\s+", " ").toLowerCase(Locale.ROOT);
     }
 }

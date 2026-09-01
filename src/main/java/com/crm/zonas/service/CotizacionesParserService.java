@@ -16,8 +16,9 @@ import java.io.InputStream;
 import java.math.BigDecimal;
 import java.time.*;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -55,6 +56,7 @@ public class CotizacionesParserService {
     private static final int COL_VENDEDOR             = 19;
     private static final int COL_DESCUENTO_GLOBAL_PCT = 20;
     private static final int COL_VALOR_DESC_GLOBAL    = 21;
+    private static final int BATCH_SIZE = 500;
 
 
     @Transactional
@@ -75,12 +77,32 @@ public class CotizacionesParserService {
         int cargados = 0, omitidos = 0;
         List<String> errores = new ArrayList<>();
 
+        List<Cotizacion> lote = new ArrayList<>(BATCH_SIZE);
+        Set<String> cotizacionesExistentes = new HashSet<>();
+        Set<String> cotizacionesProcesadas = new HashSet<>();
+
         try (Workbook wb = new XSSFWorkbook(inputStream)) {
             Sheet sheet     = wb.getSheetAt(0);
             DataFormatter fmt = new DataFormatter();
             FormulaEvaluator evaluator = wb.getCreationHelper().createFormulaEvaluator();
 
-            // Fila 0 = encabezados → empezar en fila 1
+            Map<String, Propietario> propietarios = cargarPorNombre(propietarioRepo.findAll(), Propietario::getNombre);
+            Map<String, Cliente> clientes = cargarPorNombre(clienteRepo.findAll(), Cliente::getNombre);
+            Map<String, TipoCliente> tiposCliente = cargarPorNombre(tipoClienteRepo.findAll(), TipoCliente::getNombre);
+            Map<String, CentroOperacion> centrosOperacion = cargarPorNombre(centroOperacionRepo.findAll(), CentroOperacion::getNombre);
+            Map<String, ListaPrecio> listasPrecio = cargarPorNombre(listaPrecioRepo.findAll(), ListaPrecio::getNombre);
+            Map<String, CondicionPago> condicionesPago = cargarPorNombre(condicionPagoRepo.findAll(), CondicionPago::getNombre);
+
+            for (Cotizacion cotizacion : cotizacionRepo.findAll()) {
+                if (cotizacion.getNumeroCotizacion() != null
+                        && !cotizacion.getNumeroCotizacion().isBlank()) {
+
+                    cotizacionesExistentes.add(
+                            normalizar(cotizacion.getNumeroCotizacion())
+                    );
+                }
+            }
+
             for (int i = 1; i <= sheet.getLastRowNum(); i++) {
                 Row row = sheet.getRow(i);
                 if (row == null) continue;
@@ -105,30 +127,36 @@ public class CotizacionesParserService {
                         continue;
                     }
 
-                    // ── Deduplicación por número de cotización ────
-                    if (cotizacionRepo.existsByNumeroCotizacion(numeroCot)) {
+                    String numeroNormalizado = normalizar(numeroCot);
+
+                    if (!cotizacionesProcesadas.add(numeroNormalizado)) {
                         omitidos++;
+                        errores.add("Fila " + (i + 1) + ": cotización duplicada dentro del archivo");
                         continue;
                     }
 
-                    // ── Resolver catálogos (auto-create) ──────────
-                    Propietario propietario = resolverPropietario(propNombre);
-                    Propietario creadoPor   = resolverPropietario(creadoPorNombre);
+                    if (cotizacionesExistentes.contains(numeroNormalizado)) {
+                        omitidos++;
+                        errores.add("Fila " + (i + 1) + ": cotización ya existente");
+                        continue;
+                    }
+
+                    Propietario propietario = resolverPropietario(propNombre, propietarios);
+                    Propietario creadoPor   = resolverPropietario(creadoPorNombre, propietarios);
                     Propietario vendedor    = resolverPropietarioOpcional(
-                            texto(row.getCell(COL_VENDEDOR), fmt));
+                            texto(row.getCell(COL_VENDEDOR), fmt), propietarios);
 
                     Cliente cliente = resolverCliente(
-                            texto(row.getCell(COL_FACTURAR_A), fmt));
+                            texto(row.getCell(COL_FACTURAR_A), fmt), clientes);
                     TipoCliente tipoCliente = resolverTipoCliente(
-                            texto(row.getCell(COL_TIPO_CLIENTE), fmt));
+                            texto(row.getCell(COL_TIPO_CLIENTE), fmt), tiposCliente);
                     CentroOperacion centroOp = resolverCentroOperacion(
-                            texto(row.getCell(COL_CENTRO_OPERACION), fmt));
+                            texto(row.getCell(COL_CENTRO_OPERACION), fmt), centrosOperacion);
                     ListaPrecio listaPrecio = resolverListaPrecio(
-                            texto(row.getCell(COL_LISTA_PRECIOS), fmt));
+                            texto(row.getCell(COL_LISTA_PRECIOS), fmt), listasPrecio);
                     CondicionPago condicionPago = resolverCondicionPago(
-                            texto(row.getCell(COL_CONDICION_PAGO), fmt));
+                            texto(row.getCell(COL_CONDICION_PAGO), fmt), condicionesPago);
 
-                    // ── Construir y guardar ───────────────────────
                     Cotizacion c = Cotizacion.builder()
                             .fechaCreacion(fechaCreacion)
                             .numeroCotizacion(numeroCot)
@@ -163,8 +191,15 @@ public class CotizacionesParserService {
                             .notasPedido(texto(row.getCell(COL_NOTAS_PEDIDO), fmt))
                             .build();
 
-                    cotizacionRepo.save(c);
+                    lote.add(c);
+                    cotizacionesExistentes.add(numeroNormalizado);
                     cargados++;
+
+                    if (lote.size() >= BATCH_SIZE) {
+                        cotizacionRepo.saveAll(lote);
+                        cotizacionRepo.flush();
+                        lote.clear();
+                    }
 
                 } catch (Exception e) {
                     log.warn("Fila {} omitida: {}", i + 1, e.getMessage());
@@ -172,6 +207,12 @@ public class CotizacionesParserService {
                     omitidos++;
                 }
             }
+        }
+
+        if (!lote.isEmpty()) {
+            cotizacionRepo.saveAll(lote);
+            cotizacionRepo.flush();
+            lote.clear();
         }
 
         CargaExcel registro = CargaExcel.builder()
@@ -195,56 +236,67 @@ public class CotizacionesParserService {
     }
 
 
-    private Propietario resolverPropietario(String nombre) {
-        return propietarioRepo.findByNombreIgnoreCase(nombre)
-                .orElseGet(() -> propietarioRepo.save(
-                        Propietario.builder().nombre(nombre.toUpperCase()).build()));
+    private <T> Map<String, T> cargarPorNombre(List<T> entidades, Function<T, String> extractor) {
+        return entidades.stream()
+                .filter(Objects::nonNull)
+                .filter(e -> extractor.apply(e) != null && !extractor.apply(e).isBlank())
+                .collect(Collectors.toMap(
+                        e -> normalizar(extractor.apply(e)),
+                        Function.identity(),
+                        (existente, ignorado) -> existente,
+                        HashMap::new
+                ));
     }
 
-    /** Igual que resolverPropietario pero retorna null si el nombre está vacío. */
-    private Propietario resolverPropietarioOpcional(String nombre) {
+    private Propietario resolverPropietario(String nombre, Map<String, Propietario> cache) {
+        String key = normalizar(nombre);
+        Propietario existente = cache.get(key);
+        if (existente != null) return existente;
+
+        Propietario nuevo = propietarioRepo.save(
+                Propietario.builder().nombre(nombre.trim().toUpperCase()).build());
+        cache.put(key, nuevo);
+        return nuevo;
+    }
+
+    private Propietario resolverPropietarioOpcional(String nombre, Map<String, Propietario> cache) {
         if (nombre.isBlank()) return null;
-        return resolverPropietario(nombre);
+        return resolverPropietario(nombre, cache);
     }
 
-    private Cliente resolverCliente(String nombre) {
+    private Cliente resolverCliente(String nombre, Map<String, Cliente> cache) {
         if (nombre.isBlank()) return null;
-        return clienteRepo.findByNombreIgnoreCase(nombre)
-                .orElseGet(() -> clienteRepo.save(
-                        Cliente.builder().nombre(nombre).build()));
+        return cache.computeIfAbsent(normalizar(nombre), key ->
+                clienteRepo.save(Cliente.builder().nombre(nombre.trim()).build()));
     }
 
-    private TipoCliente resolverTipoCliente(String nombre) {
+    private TipoCliente resolverTipoCliente(String nombre, Map<String, TipoCliente> cache) {
         if (nombre.isBlank()) return null;
-        return tipoClienteRepo.findByNombreIgnoreCase(nombre)
-                .orElseGet(() -> tipoClienteRepo.save(
-                        TipoCliente.builder().nombre(nombre.toUpperCase()).build()));
+        return cache.computeIfAbsent(normalizar(nombre), key ->
+                tipoClienteRepo.save(TipoCliente.builder().nombre(nombre.trim().toUpperCase()).build()));
     }
 
-    private CentroOperacion resolverCentroOperacion(String nombre) {
+    private CentroOperacion resolverCentroOperacion(String nombre, Map<String, CentroOperacion> cache) {
         if (nombre.isBlank()) return null;
-        return centroOperacionRepo.findByNombreIgnoreCase(nombre)
-                .orElseGet(() -> centroOperacionRepo.save(
-                        CentroOperacion.builder().nombre(nombre.toUpperCase()).build()));
+        return cache.computeIfAbsent(normalizar(nombre), key ->
+                centroOperacionRepo.save(CentroOperacion.builder().nombre(nombre.trim().toUpperCase()).build()));
     }
 
-    private ListaPrecio resolverListaPrecio(String nombre) {
+    private ListaPrecio resolverListaPrecio(String nombre, Map<String, ListaPrecio> cache) {
         if (nombre.isBlank()) return null;
-        return listaPrecioRepo.findByNombreIgnoreCase(nombre)
-                .orElseGet(() -> listaPrecioRepo.save(
-                        ListaPrecio.builder().nombre(nombre.toUpperCase()).build()));
+        return cache.computeIfAbsent(normalizar(nombre), key ->
+                listaPrecioRepo.save(ListaPrecio.builder().nombre(nombre.trim().toUpperCase()).build()));
     }
 
-    private CondicionPago resolverCondicionPago(String nombre) {
+    private CondicionPago resolverCondicionPago(String nombre, Map<String, CondicionPago> cache) {
         if (nombre.isBlank()) return null;
-        return condicionPagoRepo.findByNombreIgnoreCase(nombre)
-                .orElseGet(() -> condicionPagoRepo.save(
-                        CondicionPago.builder().nombre(nombre.toUpperCase()).build()));
+        return cache.computeIfAbsent(normalizar(nombre), key ->
+                condicionPagoRepo.save(CondicionPago.builder().nombre(nombre.trim().toUpperCase()).build()));
     }
 
-    // ─────────────────────────────────────────────────────────────
-    // Helpers de parseo
-    // ─────────────────────────────────────────────────────────────
+    private String normalizar(String valor) {
+        return valor == null ? "" : valor.trim().replaceAll("\\s+", " ").toLowerCase(Locale.ROOT);
+    }
 
     private String texto(Cell cell, DataFormatter fmt) {
         if (cell == null) return "";
