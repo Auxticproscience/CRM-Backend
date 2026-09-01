@@ -4,14 +4,17 @@ import com.crm.zonas.entity.CargaExcel;
 import com.crm.zonas.entity.Cotizacion;
 import com.crm.zonas.repository.CargaExcelRepository;
 import com.crm.zonas.repository.CotizacionRepository;
+import jakarta.persistence.criteria.Predicate;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.Optional;
 
 @Service
@@ -39,14 +42,29 @@ public class CotizacionService {
                 .atOffset(ZoneOffset.UTC)
                 : null;
 
-        return cotizacionRepo.buscarConFiltros(
-                propietarioId,
-                clienteId,
-                centroId,
-                fechaDesde,
-                fechaHasta,
-                pageable
-        );
+        Specification<Cotizacion> filtros = (root, query, cb) -> {
+            var predicados = new ArrayList<Predicate>();
+
+            if (propietarioId != null) {
+                predicados.add(cb.equal(root.get("propietario").get("id"), propietarioId));
+            }
+            if (clienteId != null) {
+                predicados.add(cb.equal(root.get("cliente").get("id"), clienteId));
+            }
+            if (centroId != null) {
+                predicados.add(cb.equal(root.get("centroOperacion").get("id"), centroId));
+            }
+            if (fechaDesde != null) {
+                predicados.add(cb.greaterThanOrEqualTo(root.get("fechaCreacion"), fechaDesde));
+            }
+            if (fechaHasta != null) {
+                predicados.add(cb.lessThan(root.get("fechaCreacion"), fechaHasta));
+            }
+
+            return cb.and(predicados.toArray(Predicate[]::new));
+        };
+
+        return cotizacionRepo.findAll(filtros, pageable);
     }
 
     public Optional<Cotizacion> porId(Integer id) {
