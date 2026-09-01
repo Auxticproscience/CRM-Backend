@@ -16,26 +16,6 @@ public interface CotizacionRepository extends JpaRepository<Cotizacion, Integer>
 
     Optional<Cotizacion> findByNumeroCotizacion(String numeroCotizacion);
 
-    @EntityGraph(attributePaths = {
-            "propietario",
-            "creadoPor",
-            "vendedor",
-            "cliente",
-            "tipoCliente",
-            "centroOperacion",
-            "listaPrecio",
-            "condicionPago"
-    })
-    @Query("""
-            SELECT c
-            FROM Cotizacion c
-            WHERE (:propietarioId IS NULL OR c.propietario.id = :propietarioId)
-              AND (:clienteId IS NULL OR c.cliente.id = :clienteId)
-              AND (:centroId IS NULL OR c.centroOperacion.id = :centroId)
-              AND (:desde IS NULL OR c.fechaCreacion >= :desde)
-              AND (:hasta IS NULL OR c.fechaCreacion < :hasta)
-            ORDER BY c.fechaCreacion DESC
-            """)
     Page<Cotizacion> buscarConFiltros(
             @Param("propietarioId") Integer propietarioId,
             @Param("clienteId") Integer clienteId,
